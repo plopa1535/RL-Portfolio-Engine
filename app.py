@@ -78,77 +78,17 @@ def _get_agent(state_dim, action_dim):
 
 
 def _run_portfolio_simulation():
-    """Run model inference on test period and return results."""
+    """Load pre-computed test period results from portfolio_cache.json."""
     ok, cached = _is_cached("portfolio")
     if ok:
         return cached
 
-    with _yf_lock:
-        # Double-check cache after acquiring lock
-        ok, cached = _is_cached("portfolio")
-        if ok:
-            return cached
+    cache_path = os.path.join(OUTPUT_DIR, "portfolio_cache.json")
+    if not os.path.exists(cache_path):
+        return {"error": "portfolio_cache.json not found. Run gen_backtest_cache.py locally first."}
 
-        try:
-            env = PortfolioEnv(tickers=TICKERS, start=TEST_START, end=TEST_END,
-                               window=WINDOW_SIZE)
-        except Exception as e:
-            return {"error": f"Data loading failed: {str(e)}"}
-
-    agent = _get_agent(env.state_dim, env.action_dim)
-    if agent is None:
-        return {"error": "Model not found (outputs/best_model.pt)"}
-
-    # Run backtest
-    state = env.reset()
-    while True:
-        action = agent.select_action(state, explore=False)
-        next_state, reward, done, info = env.step(action)
-        state = next_state
-        if done:
-            break
-
-    sdelp_values = env.portfolio_values
-    bah_values = env.get_buy_and_hold_values()
-    sdelp_metrics = compute_metrics(sdelp_values)
-    bah_metrics = compute_metrics(bah_values)
-
-    # Date labels
-    dates = env.dates[env.window:]
-    min_len = min(len(sdelp_values), len(bah_values), len(dates))
-    date_labels = [d.strftime("%Y-%m-%d") for d in dates[:min_len].to_pydatetime()]
-
-    # Weight history
-    weight_history = np.array(env.weight_history)
-    weight_labels = ["Cash"] + env.tickers
-    # Downsample weights for chart (every 5 days)
-    step = max(1, len(weight_history) // 200)
-    weight_dates = date_labels[::step]
-    weights_sampled = weight_history[::step].tolist()
-
-    # Daily returns
-    vals = np.array(sdelp_values[:min_len])
-    daily_returns = (vals[1:] / vals[:-1] - 1).tolist()
-
-    # Current (latest) weights
-    current_weights = weight_history[-1].tolist()
-
-    result = {
-        "dates": date_labels,
-        "sdelp_values": [float(v) for v in sdelp_values[:min_len]],
-        "bah_values": [float(v) for v in bah_values[:min_len]],
-        "sdelp_metrics": {k: round(float(v), 4) for k, v in sdelp_metrics.items()},
-        "bah_metrics": {k: round(float(v), 4) for k, v in bah_metrics.items()},
-        "current_weights": current_weights,
-        "weight_labels": weight_labels,
-        "weight_dates": weight_dates,
-        "weights_sampled": weights_sampled,
-        "daily_returns": daily_returns,
-        "daily_return_dates": date_labels[1:],
-        "tickers": env.tickers,
-        "test_start": TEST_START,
-        "test_end": TEST_END,
-    }
+    with open(cache_path, "r") as f:
+        result = json.load(f)
 
     _set_cache("portfolio", result)
     return result
@@ -194,47 +134,40 @@ def _get_prices():
 
 
 def _run_train_simulation():
-    """Run best model inference on training period data."""
+    """Load pre-computed training results from training_history.json (avoids heavy PyTorch inference on server)."""
     ok, cached = _is_cached("train_portfolio")
     if ok:
         return cached
 
-    with _yf_lock:
-        ok, cached = _is_cached("train_portfolio")
-        if ok:
-            return cached
-        try:
-            env = PortfolioEnv(tickers=TICKERS, start=TRAIN_START, end=TRAIN_END,
-                               window=WINDOW_SIZE)
-        except Exception as e:
-            return {"error": f"Train data loading failed: {str(e)}"}
+    history_path = os.path.join(OUTPUT_DIR, "training_history.json")
+    if not os.path.exists(history_path):
+        return {"error": "training_history.json not found. Run training first."}
 
-    agent = _get_agent(env.state_dim, env.action_dim)
-    if agent is None:
-        return {"error": "Model not found (outputs/best_model.pt)"}
+    with open(history_path, "r") as f:
+        history = json.load(f)
 
-    state = env.reset()
-    while True:
-        action = agent.select_action(state, explore=False)
-        next_state, reward, done, info = env.step(action)
-        state = next_state
-        if done:
-            break
+    sdelp_values = history.get("last_portfolio_values", [])
+    bah_values = history.get("bah_values", [])
 
-    sdelp_values = env.portfolio_values
-    bah_values = env.get_buy_and_hold_values()
+    if not sdelp_values:
+        return {"error": "No portfolio values in training_history.json"}
 
-    dates = env.dates[env.window:]
-    min_len = min(len(sdelp_values), len(bah_values), len(dates))
-    date_labels = [d.strftime("%Y-%m-%d") for d in dates[:min_len].to_pydatetime()]
+    min_len = min(len(sdelp_values), len(bah_values))
+    # Generate date labels for training period
+    import pandas as pd
+    dates = pd.date_range(start=TRAIN_START, periods=min_len, freq="B")
+    date_labels = [d.strftime("%Y-%m-%d") for d in dates]
 
-    sdelp_metrics = compute_metrics(sdelp_values[:min_len])
-    bah_metrics = compute_metrics(bah_values[:min_len])
+    sdelp_arr = [float(v) for v in sdelp_values[:min_len]]
+    bah_arr = [float(v) for v in bah_values[:min_len]]
+
+    sdelp_metrics = compute_metrics(sdelp_arr)
+    bah_metrics = compute_metrics(bah_arr)
 
     result = {
         "dates": date_labels,
-        "sdelp_values": [float(v) for v in sdelp_values[:min_len]],
-        "bah_values": [float(v) for v in bah_values[:min_len]],
+        "sdelp_values": sdelp_arr,
+        "bah_values": bah_arr,
         "sdelp_metrics": {k: round(float(v), 4) for k, v in sdelp_metrics.items()},
         "bah_metrics": {k: round(float(v), 4) for k, v in bah_metrics.items()},
         "train_start": TRAIN_START,
@@ -246,54 +179,17 @@ def _run_train_simulation():
 
 
 def _run_live_simulation():
-    """Run forward simulation using trained model on most recent market data (last 30 days)."""
+    """Load pre-computed recent simulation from live_sim_cache.json."""
     ok, cached = _is_cached("live_sim")
     if ok:
         return cached
 
-    from datetime import datetime, timedelta
+    cache_path = os.path.join(OUTPUT_DIR, "live_sim_cache.json")
+    if not os.path.exists(cache_path):
+        return {"error": "live_sim_cache.json not found. Run gen_backtest_cache.py locally first."}
 
-    end_date = datetime.now().strftime("%Y-%m-%d")
-    start_date = (datetime.now() - timedelta(days=150)).strftime("%Y-%m-%d")
-
-    with _yf_lock:
-        ok, cached = _is_cached("live_sim")
-        if ok:
-            return cached
-        try:
-            env = PortfolioEnv(tickers=TICKERS, start=start_date, end=end_date,
-                               window=WINDOW_SIZE)
-        except Exception as e:
-            return {"error": f"Live data loading failed: {str(e)}"}
-
-    agent = _get_agent(env.state_dim, env.action_dim)
-    if agent is None:
-        return {"error": "Model not found (outputs/best_model.pt)"}
-
-    state = env.reset()
-    last_action = None
-    while True:
-        action = agent.select_action(state, explore=False)
-        last_action = action
-        next_state, reward, done, info = env.step(action)
-        state = next_state
-        if done:
-            break
-
-    sdelp_values = env.portfolio_values
-    bah_values = env.get_buy_and_hold_values()
-    dates = env.dates[env.window:]
-    min_len = min(len(sdelp_values), len(bah_values), len(dates))
-    date_labels = [d.strftime("%Y-%m-%d") for d in dates[:min_len].to_pydatetime()]
-
-    n = min(30, min_len)
-    result = {
-        "dates": date_labels[-n:],
-        "sdelp_values": [float(v) for v in list(sdelp_values[:min_len])[-n:]],
-        "bah_values": [float(v) for v in list(bah_values[:min_len])[-n:]],
-        "current_weights": [float(w) for w in last_action],
-        "tickers": ["CASH"] + env.tickers,
-    }
+    with open(cache_path, "r") as f:
+        result = json.load(f)
 
     _set_cache("live_sim", result)
     return result
