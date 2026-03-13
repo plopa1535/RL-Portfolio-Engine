@@ -9,3 +9,5 @@ pyyaml
 flask
 curl_cffi
 gunicorn
+openpyxl
+requests
