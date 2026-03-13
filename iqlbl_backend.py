@@ -5,6 +5,7 @@ Wraps two_stage_DYBL_portfolio.py classes for API use.
 
 import os
 import sys
+import json
 import time
 import threading
 import numpy as np
@@ -15,6 +16,7 @@ warnings.filterwarnings("ignore")
 
 # Add IQLBL folder to path
 IQLBL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "IQLBL_v1_Dashboard")
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
 sys.path.insert(0, IQLBL_DIR)
 
 from two_stage_DYBL_portfolio import (
@@ -149,157 +151,38 @@ def _ensure_iqlbl_loaded():
 
 
 def iqlbl_run_portfolio():
-    """Run IQLBL portfolio evaluation on test period."""
+    """Load pre-computed IQL-BL test period results from iqlbl_portfolio_cache.json."""
     from app import _is_cached, _set_cache
 
     ok, cached = _is_cached("iqlbl_portfolio")
     if ok:
         return cached
 
-    if not _ensure_iqlbl_loaded():
-        return {"error": "IQLBL model not available. Check IQLBL_v1_Dashboard folder."}
+    cache_path = os.path.join(OUTPUT_DIR, "iqlbl_portfolio_cache.json")
+    if not os.path.exists(cache_path):
+        return {"error": "iqlbl_portfolio_cache.json not found. Run gen_iqlbl_cache.py locally first."}
 
-    config = _iqlbl_config
-    env = _iqlbl_env
-
-    # Find test start index
-    test_start = pd.to_datetime(config['data']['test_start_date'])
-    test_start_idx = None
-    for i, date in enumerate(env.dates):
-        if date >= test_start and test_start_idx is None:
-            test_start_idx = i
-
-    if test_start_idx is None:
-        return {"error": "Could not find test start date in data"}
-
-    # Reset BL optimizer state for fresh evaluation
-    bl_optimizer = DynamicBlackLittermanOptimizer(n_assets=len(IQLBL_COINS), config=config)
-
-    # Evaluate portfolio
-    results = evaluate_portfolio(env, _iqlbl_agents, bl_optimizer, config,
-                                  test_start_idx, len(env.dates))
-
-    # Evaluate baselines
-    baselines = evaluate_baselines(env, config, test_start_idx, len(env.dates))
-
-    # Format results for API
-    dates = results['dates']
-    portfolio_values = results['portfolio_values']
-    initial_value = config['portfolio'].get('initial_value', 10000)
-
-    # Normalize portfolio values (like SDELP does)
-    norm_values = [v / initial_value for v in portfolio_values]
-    norm_bah = [v / initial_value for v in baselines['equal_weight']]
-
-    min_len = min(len(norm_values), len(norm_bah), len(dates))
-    date_labels = [d.strftime("%Y-%m-%d") if hasattr(d, 'strftime') else str(d) for d in dates[:min_len]]
-
-    # Compute metrics
-    iqlbl_metrics = compute_metrics(norm_values[:min_len])
-    bah_metrics = compute_metrics(norm_bah[:min_len])
-
-    # Weight history
-    weights = results['weights']
-    step = max(1, len(weights) // 200)
-    weight_dates = date_labels[::step]
-    weights_sampled = [w.tolist() if hasattr(w, 'tolist') else list(w) for w in weights[::step]]
-
-    # Daily returns
-    vals = np.array(norm_values[:min_len])
-    daily_returns = (vals[1:] / vals[:-1] - 1).tolist() if len(vals) > 1 else []
-
-    # Current weights
-    current_weights = weights[-1].tolist() if hasattr(weights[-1], 'tolist') else list(weights[-1])
-
-    # IQLBL-specific data
-    regimes = results.get('regime', [])
-    confidences = results.get('view_confidence', [])
-    drawdowns = results.get('drawdown', [])
-    defensive_modes = results.get('defensive_mode', [])
-
-    result = {
-        "dates": date_labels,
-        "sdelp_values": [float(v) for v in norm_values[:min_len]],
-        "bah_values": [float(v) for v in norm_bah[:min_len]],
-        "sdelp_metrics": {k: round(float(v), 4) for k, v in iqlbl_metrics.items()},
-        "bah_metrics": {k: round(float(v), 4) for k, v in bah_metrics.items()},
-        "current_weights": current_weights,
-        "weight_labels": IQLBL_COINS,
-        "weight_dates": weight_dates,
-        "weights_sampled": weights_sampled,
-        "daily_returns": daily_returns,
-        "daily_return_dates": date_labels[1:],
-        "tickers": IQLBL_COINS,
-        "test_start": config['data'].get('test_start_date', ''),
-        "test_end": dates[-1].strftime("%Y-%m-%d") if hasattr(dates[-1], 'strftime') else str(dates[-1]),
-        # IQLBL-specific
-        "regimes": regimes[:min_len] if regimes else [],
-        "confidences": [float(c) for c in confidences[:min_len]] if confidences else [],
-        "drawdowns": [float(d) for d in drawdowns[:min_len]] if drawdowns else [],
-        "defensive_modes": [bool(d) for d in defensive_modes[:min_len]] if defensive_modes else [],
-    }
+    with open(cache_path, "r") as f:
+        result = json.load(f)
 
     _set_cache("iqlbl_portfolio", result)
     return result
 
 
 def iqlbl_run_train_portfolio():
-    """Run IQLBL model on training period (for train chart)."""
+    """Load pre-computed IQL-BL train period results from iqlbl_train_cache.json."""
     from app import _is_cached, _set_cache
 
     ok, cached = _is_cached("iqlbl_train_portfolio")
     if ok:
         return cached
 
-    if not _ensure_iqlbl_loaded():
-        return {"error": "IQLBL model not available"}
+    cache_path = os.path.join(OUTPUT_DIR, "iqlbl_train_cache.json")
+    if not os.path.exists(cache_path):
+        return {"error": "iqlbl_train_cache.json not found. Run gen_iqlbl_cache.py locally first."}
 
-    config = _iqlbl_config
-    env = _iqlbl_env
-
-    # Find train end index
-    train_end = pd.to_datetime(config['data']['train_end_date'])
-    window_size = config['environment']['window_size']
-
-    train_end_idx = None
-    for i, date in enumerate(env.dates):
-        if date <= train_end:
-            train_end_idx = i
-
-    if train_end_idx is None:
-        return {"error": "Could not find train end date"}
-
-    # Start from after warmup
-    start_idx = window_size + 20
-
-    # Reset BL optimizer
-    bl_optimizer = DynamicBlackLittermanOptimizer(n_assets=len(IQLBL_COINS), config=config)
-
-    results = evaluate_portfolio(env, _iqlbl_agents, bl_optimizer, config,
-                                  start_idx, train_end_idx)
-    baselines = evaluate_baselines(env, config, start_idx, train_end_idx)
-
-    dates = results['dates']
-    portfolio_values = results['portfolio_values']
-    initial_value = config['portfolio'].get('initial_value', 10000)
-
-    norm_values = [v / initial_value for v in portfolio_values]
-    norm_bah = [v / initial_value for v in baselines['equal_weight']]
-    min_len = min(len(norm_values), len(norm_bah), len(dates))
-    date_labels = [d.strftime("%Y-%m-%d") if hasattr(d, 'strftime') else str(d) for d in dates[:min_len]]
-
-    iqlbl_metrics = compute_metrics(norm_values[:min_len])
-    bah_metrics = compute_metrics(norm_bah[:min_len])
-
-    result = {
-        "dates": date_labels,
-        "sdelp_values": [float(v) for v in norm_values[:min_len]],
-        "bah_values": [float(v) for v in norm_bah[:min_len]],
-        "sdelp_metrics": {k: round(float(v), 4) for k, v in iqlbl_metrics.items()},
-        "bah_metrics": {k: round(float(v), 4) for k, v in bah_metrics.items()},
-        "train_start": dates[0].strftime("%Y-%m-%d") if dates and hasattr(dates[0], 'strftime') else "",
-        "train_end": config['data']['train_end_date'],
-    }
+    with open(cache_path, "r") as f:
+        result = json.load(f)
 
     _set_cache("iqlbl_train_portfolio", result)
     return result
