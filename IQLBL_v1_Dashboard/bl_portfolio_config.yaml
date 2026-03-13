@@ -1,0 +1,87 @@
+# ============================================================
+# Two-Stage IQL + Black-Litterman Portfolio Configuration
+# ============================================================
+
+# Data Settings
+data:
+  train_end_date: "2025-12-31"
+  test_start_date: "2026-01-01"
+
+# Environment Settings
+environment:
+  window_size: 120 #120  # Stage 1 상태 차원 (과거 N일 수익률)
+
+# IQL Hyperparameters (Stage 1 전용)
+iql:
+  gamma: 0.99          # 할인율
+  tau: 0.005           # Target network soft update rate
+  expectile: 0.8       # Value function expectile (0.7 ~ 0.9)
+  temperature: 3.0     # Policy extraction temperature (1.0 ~ 10.0)
+  lr: 0.0003           # Learning rate
+  hidden_dims: [256, 256]  # Hidden layer dimensions
+
+# Training Settings
+training:
+  n_epochs: 100        # 에포크 수
+  batch_size: 256      # 배치 크기
+  learning_window: 5  # 리밸런싱 주기 (일) 100%이상
+
+  # Stage 1 Behavior Policies
+  behavior_policies:
+    - oracle
+    - momentum
+    - reversal
+    - random
+
+# Portfolio Settings
+portfolio:
+  initial_value: 10000    # 초기 투자금 ($)
+  fee_rate: 0.001         # 거래 수수료율 (0.1%)
+
+  # Long/Short Settings
+  allow_short: true       # Short 허용 여부
+  max_leverage: 1.0       # 최대 레버리지 (절대값 비중 합)
+  min_weight: -1.0        # 최소 비중 (Short)
+  max_weight: 1.0         # 최대 비중 (Long)
+
+# ============================================================
+# Black-Litterman Settings (Stage 2)
+# ============================================================
+black_litterman:
+  # 핵심 파라미터
+  tau: 0.05               # 균형 수익률 불확실성 스케일링 (0.01 ~ 0.1)
+                          # 작을수록 시장 균형에 더 가깝게, 클수록 뷰 반영 증가
+
+  risk_aversion: 2.5      # 위험회피계수 (1.0 ~ 5.0)
+                          # 높을수록 보수적 포트폴리오
+
+  view_confidence: 0.6    # Stage 1 신호 신뢰도 (0.0 ~ 1.0)
+                          # 높을수록 Stage 1 IQL 신호를 더 신뢰
+
+  lookback: 60            # 공분산 추정 기간 (일)
+                          # 시장 변동성 추정에 사용
+
+  # 뷰 생성 설정
+  view_scaling: 0.02      # 신호를 기대수익률로 변환하는 스케일 (2% 기준)
+
+  # 수렴 설정
+  shrinkage: 0.1          # 공분산 행렬 shrinkage (0.0 ~ 1.0)
+                          # 추정 오차 감소를 위한 정규화
+
+# Stage 2 추가 설정
+stage2:
+  return_window: 1        # 수익률 계산 기간 (일)
+  volatility_window: 20   # 변동성 계산 기간 (일)
+
+# Output Settings
+output:
+  result_image: "two_stage_BL_portfolio_results.png"
+  save_model: true
+  model_path: "two_stage_BL_portfolio_model.pt"
+
+# Random Seed
+seed: 42
+
+# GPU Settings
+gpu:
+  use_cuda: true

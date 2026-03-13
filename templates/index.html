@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RL Portfolio Engine — Daily Monitor</title>
+    <meta name="description"
+        content="RL-based Portfolio Optimization Engine Daily Monitoring Dashboard">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap"
+        rel="stylesheet">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+
+    <!-- ══════════════════════════════════════════════
+     HEADER
+     ══════════════════════════════════════════════ -->
+    <header class="header">
+        <div class="header-left">
+            <div>
+                <div class="header-title">RL Portfolio Engine</div>
+                <div class="header-subtitle">Crypto Portfolio Optimization • Daily Monitor</div>
+            </div>
+            <select id="model-selector" class="model-selector" onchange="switchModel(this.value)">
+                <option value="sdelp">SDELP-DDPG</option>
+                <option value="iqlbl">IQL-BL</option>
+            </select>
+        </div>
+        <div class="header-right">
+            <div class="nav-tabs">
+                <button class="nav-tab active" data-tab="dashboard">Dashboard</button>
+                <button class="nav-tab" data-tab="allocation">Allocation</button>
+                <button class="nav-tab" data-tab="model">Model</button>
+            </div>
+            <span class="update-time" id="update-time">
+                <span class="status-dot live"></span>Loading...
+            </span>
+            <button class="refresh-btn" id="refresh-btn" onclick="refreshDashboard()">
+                <svg class="refresh-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2.5">
+                    <path d="M23 4v6h-6M1 20v-6h6" />
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+                </svg>
+                Refresh
+            </button>
+        </div>
+    </header>
+
+    <!-- ══════════════════════════════════════════════
+     MAIN CONTENT
+     ══════════════════════════════════════════════ -->
+    <main class="main-content">
+
+        <!-- ── KPI Summary Cards ── -->
+        <section class="metric-cards">
+            <div class="metric-card" id="metric-portfolio">
+                <div class="metric-card-icon blue"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></div>
+                <div class="metric-card-label">Portfolio Value (CRR)</div>
+                <div class="metric-card-value text-blue">—</div>
+                <div class="metric-card-change"></div>
+            </div>
+            <div class="metric-card" id="metric-daily">
+                <div class="metric-card-icon green"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg></div>
+                <div class="metric-card-label">Annualized Return</div>
+                <div class="metric-card-value text-green">—</div>
+                <div class="metric-card-change"></div>
+            </div>
+            <div class="metric-card" id="metric-sharpe">
+                <div class="metric-card-icon purple"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></div>
+                <div class="metric-card-label">Sharpe Ratio</div>
+                <div class="metric-card-value text-purple">—</div>
+                <div class="metric-card-change"></div>
+            </div>
+            <div class="metric-card" id="metric-mdd">
+                <div class="metric-card-icon red"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+                <div class="metric-card-label">Max Drawdown</div>
+                <div class="metric-card-value text-red">—</div>
+                <div class="metric-card-change"></div>
+            </div>
+        </section>
+
+        <!-- ══ TAB: Dashboard ══ -->
+        <div class="tab-content active" data-tab-content="dashboard">
+
+            <!-- ── Main: Test/Train Charts (left) + Sidebar (right) ── -->
+            <section class="grid-main">
+                <div class="grid-left-stack">
+                    <div class="chart-card">
+                        <div class="chart-card-header">
+                            <div class="chart-card-title">Test Period — Portfolio Value</div>
+                            <span class="badge badge-blue" id="badge-test-period">—</span>
+                        </div>
+                        <div class="chart-container">
+                            <div class="loading-overlay" id="loading-portfolio">
+                                <div class="loading-spinner"></div>
+                            </div>
+                            <canvas id="portfolioChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-card-header">
+                            <div class="chart-card-title">Train Period — Portfolio Value</div>
+                            <span class="badge badge-green" id="badge-train-period">—</span>
+                        </div>
+                        <div class="chart-container">
+                            <div class="loading-overlay" id="loading-train">
+                                <div class="loading-spinner"></div>
+                            </div>
+                            <canvas id="trainPortfolioChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+                <div class="grid-right-stack">
+                    <div class="chart-card">
+                        <div class="chart-card-header">
+                            <div class="chart-card-title">Live Return (5min)</div>
+                            <span class="badge badge-blue" id="badge-30d-return">—</span>
+                            <span class="badge badge-dim" id="badge-last-refresh">—</span>
+                        </div>
+                        <div class="chart-container chart-container-sm">
+                            <canvas id="recent30dChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-card-header">
+                            <div class="chart-card-title">Model Parameters</div>
+                            <span class="badge badge-purple" id="badge-model-params">SDELP</span>
+                        </div>
+                        <div class="model-info-grid mini" id="model-info-mini">
+                            <div class="info-item">
+                                <div class="info-item-label">Loading...</div>
+                                <div class="info-item-value">—</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ── Metrics Comparison: Train vs Test ── -->
+            <section class="grid-2" style="margin-top: var(--spacing-lg);">
+                <div class="dark-card">
+                    <div class="dark-card-header">
+                        <div class="dark-card-icon">VS</div>
+                        <div class="dark-card-title">Train Metrics</div>
+                        <span class="dark-card-badge" id="badge-train-vs">Model vs B&H</span>
+                    </div>
+                    <table class="metrics-table">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th id="th-train-model">Model</th>
+                                <th>Buy & Hold</th>
+                            </tr>
+                        </thead>
+                        <tbody id="train-metrics-tbody">
+                            <tr>
+                                <td colspan="3" style="text-align:center; opacity:0.4;">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="dark-card">
+                    <div class="dark-card-header">
+                        <div class="dark-card-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg></div>
+                        <div class="dark-card-title">Test Metrics</div>
+                        <span class="dark-card-badge" id="badge-test-vs">Model vs B&H</span>
+                    </div>
+                    <table class="metrics-table">
+                        <thead>
+                            <tr>
+                                <th>Metric</th>
+                                <th id="th-test-model">Model</th>
+                                <th>Buy & Hold</th>
+                            </tr>
+                        </thead>
+                        <tbody id="metrics-tbody">
+                            <tr>
+                                <td colspan="3" style="text-align:center; opacity:0.4;">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- ── Daily Returns ── -->
+            <section style="margin-top: var(--spacing-lg);">
+                <div class="chart-card">
+                    <div class="chart-card-header">
+                        <div class="chart-card-title">Daily Returns</div>
+                        <span class="badge badge-green" id="badge-daily-returns">SDELP-DDPG</span>
+                    </div>
+                    <div class="chart-container chart-container-sm">
+                        <canvas id="dailyReturnsChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+        </div><!-- /tab-content dashboard -->
+
+        <!-- ══ TAB: Allocation ══ -->
+        <div class="tab-content" data-tab-content="allocation">
+
+            <!-- ── Allocation KPIs ── -->
+            <section class="metric-cards alloc-kpis" id="alloc-kpi-cards">
+                <div class="metric-card">
+                    <div class="metric-card-icon green"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2z"/></svg></div>
+                    <div class="metric-card-label">Top Holding</div>
+                    <div class="metric-card-value text-green" id="alloc-top-holding">—</div>
+                    <div class="metric-card-change" id="alloc-top-weight"></div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-card-icon blue"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/><path d="M12 8v8"/></svg></div>
+                    <div class="metric-card-label">Active Positions</div>
+                    <div class="metric-card-value text-blue" id="alloc-active-pos">—</div>
+                    <div class="metric-card-change" id="alloc-active-desc"></div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-card-icon purple">📐</div>
+                    <div class="metric-card-label">HHI Concentration</div>
+                    <div class="metric-card-value text-purple" id="alloc-hhi">—</div>
+                    <div class="metric-card-change" id="alloc-hhi-desc"></div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-card-icon yellow">⚖️</div>
+                    <div class="metric-card-label">Effective N</div>
+                    <div class="metric-card-value text-yellow" id="alloc-eff-n">—</div>
+                    <div class="metric-card-change" id="alloc-eff-desc"></div>
+                </div>
+            </section>
+
+            <!-- ── Weight History (Stacked Area) ── -->
+            <section class="chart-card">
+                <div class="chart-card-header">
+                    <div class="chart-card-title">Portfolio Allocation History</div>
+                    <span class="badge badge-yellow">Weight Evolution</span>
+                </div>
+                <div class="chart-container chart-container-full">
+                    <canvas id="weightHistoryChart"></canvas>
+                </div>
+            </section>
+
+            <!-- ── Current Weights: Bar Chart + Ranking Table ── -->
+            <section class="grid-main" style="margin-top: var(--spacing-lg);">
+                <div class="chart-card">
+                    <div class="chart-card-header">
+                        <div class="chart-card-title">Current Asset Weights</div>
+                        <span class="badge badge-green">Latest</span>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="weightsBarChart"></canvas>
+                    </div>
+                </div>
+                <div class="dark-card">
+                    <div class="dark-card-header">
+                        <div class="dark-card-icon">🏆</div>
+                        <div class="dark-card-title">Weight Ranking</div>
+                        <span class="dark-card-badge">Sorted</span>
+                    </div>
+                    <table class="metrics-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Asset</th>
+                                <th>Weight</th>
+                                <th>Bar</th>
+                            </tr>
+                        </thead>
+                        <tbody id="weight-ranking-tbody">
+                            <tr>
+                                <td colspan="4" style="text-align:center; opacity:0.4;">Loading...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- ── Donut (smaller) ── -->
+            <section class="chart-card" style="margin-top: var(--spacing-lg);">
+                <div class="chart-card-header">
+                    <div class="chart-card-title">Asset Distribution</div>
+                    <span class="badge badge-blue">Donut</span>
+                </div>
+                <div class="chart-container chart-container-sm">
+                    <canvas id="weightsDonutAlloc"></canvas>
+                </div>
+            </section>
+
+        </div><!-- /tab-content allocation -->
+
+        <!-- ══ TAB: Model ══ -->
+        <div class="tab-content" data-tab-content="model">
+            <section class="chart-card">
+                <div class="chart-card-header">
+                    <div class="chart-card-title">Full Hyperparameter Configuration</div>
+                    <span class="badge badge-blue" id="badge-full-config">SDELP-DDPG</span>
+                </div>
+                <div class="model-info-grid" id="model-info-grid">
+                    <div class="info-item">
+                        <div class="info-item-label">Loading...</div>
+                        <div class="info-item-value">—</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ── RL Training Visualizations (Chart.js) ── -->
+            <section class="grid-2" style="margin-top: var(--spacing-lg);">
+                <div class="chart-card">
+                    <div class="chart-card-header">
+                        <div class="chart-card-title">Episode Reward</div>
+                        <span class="badge badge-green">Learning Curve</span>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="episodeRewardChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-card-header">
+                        <div class="chart-card-title">Portfolio Value per Episode</div>
+                        <span class="badge badge-blue">Convergence</span>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="episodeValueChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <section class="grid-2" style="margin-top: var(--spacing-lg);">
+                <div class="chart-card">
+                    <div class="chart-card-header">
+                        <div class="chart-card-title">Actor Loss</div>
+                        <span class="badge badge-purple">Policy Gradient</span>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="actorLossChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-card-header">
+                        <div class="chart-card-title">Critic Loss</div>
+                        <span class="badge badge-red">TD Error</span>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="criticLossChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <section style="margin-top: var(--spacing-lg);">
+                <div class="chart-card">
+                    <div class="chart-card-header">
+                        <div class="chart-card-title">Action Distribution</div>
+                        <span class="badge badge-yellow">Policy Analysis</span>
+                    </div>
+                    <div class="training-img-container">
+                        <img src="/outputs/action_distribution.png" alt="Action Distribution" class="training-img"
+                            loading="lazy">
+                    </div>
+                </div>
+            </section>
+
+            <section style="margin-top: var(--spacing-lg);">
+                <div class="chart-card">
+                    <div class="chart-card-header">
+                        <div class="chart-card-title">Lévy vs Gaussian Process</div>
+                        <span class="badge badge-purple">SDE Comparison</span>
+                    </div>
+                    <div class="training-img-container">
+                        <img src="/outputs/levy_vs_gaussian.png" alt="Lévy vs Gaussian" class="training-img"
+                            loading="lazy">
+                    </div>
+                </div>
+            </section>
+        </div><!-- /tab-content model -->
+
+    </main>
+
+    <!-- ══════════════════════════════════════════════
+     FOOTER
+     ══════════════════════════════════════════════ -->
+    <footer class="footer">
+        Models: SDELP-DDPG | IQL + Dynamic Black-Litterman
+        &nbsp;•&nbsp;
+        Data: <a href="https://finance.yahoo.com/" target="_blank">Yahoo Finance</a> / Binance
+        &nbsp;•&nbsp;
+        Backtest Results Only
+    </footer>
+
+    <!-- Dashboard JS -->
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+
+</body>
+
+</html>
