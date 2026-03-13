@@ -95,42 +95,58 @@ def _run_portfolio_simulation():
 
 
 def _get_prices():
-    """Fetch recent crypto prices from yfinance."""
+    """Fetch recent 6-month daily prices from Binance API."""
     ok, cached = _is_cached("prices")
     if ok:
         return cached
 
-    import yfinance as yf
-    try:
-        df = yf.download(TICKERS, period="6mo", auto_adjust=True)
-        close = df["Close"] if len(TICKERS) > 1 else df["Close"].to_frame()
-        close = close.ffill().bfill()
+    import requests as req
+    import pandas as pd
 
-        dates = [d.strftime("%Y-%m-%d") for d in close.index.to_pydatetime()]
-        prices = {}
-        for ticker in close.columns:
-            col = close[ticker].tolist()
-            prices[ticker] = [round(float(v), 2) if not np.isnan(v) else None for v in col]
+    # Binance daily klines, 180 days
+    binance_map = {
+        'BTC-USD': 'BTCUSDT', 'ETH-USD': 'ETHUSDT', 'DOGE-USD': 'DOGEUSDT',
+        'LTC-USD': 'LTCUSDT', 'XEM-USD': 'XEMUSDT', 'XLM-USD': 'XLMUSDT',
+        'SOL-USD': 'SOLUSDT', 'XRP-USD': 'XRPUSDT',
+    }
 
-        # Latest prices
-        latest = {}
-        for ticker in close.columns:
-            val = close[ticker].dropna()
-            if len(val) > 0:
-                latest[ticker] = round(float(val.iloc[-1]), 2)
-                prev = float(val.iloc[-2]) if len(val) > 1 else float(val.iloc[-1])
-                latest[f"{ticker}_change"] = round((latest[ticker] - prev) / prev * 100, 2)
+    prices = {}
+    latest = {}
+    all_dates = None
+    tickers_out = []
 
-        result = {
-            "dates": dates,
-            "prices": prices,
-            "latest": latest,
-            "tickers": list(close.columns),
-        }
-        _set_cache("prices", result)
-        return result
-    except Exception as e:
-        return {"error": str(e)}
+    for ticker in TICKERS:
+        symbol = binance_map.get(ticker)
+        if symbol is None:
+            continue
+        try:
+            url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1d&limit=180"
+            resp = req.get(url, timeout=10)
+            data = resp.json()
+            if not isinstance(data, list) or len(data) == 0:
+                continue
+            dates = [pd.Timestamp(k[0], unit='ms').strftime("%Y-%m-%d") for k in data]
+            closes = [round(float(k[4]), 2) for k in data]
+            if all_dates is None:
+                all_dates = dates
+            prices[ticker] = closes
+            latest[ticker] = closes[-1]
+            latest[f"{ticker}_change"] = round((closes[-1] - closes[-2]) / closes[-2] * 100, 2) if len(closes) > 1 else 0.0
+            tickers_out.append(ticker)
+        except Exception:
+            continue
+
+    if not prices:
+        return {"error": "Failed to fetch prices from Binance"}
+
+    result = {
+        "dates": all_dates or [],
+        "prices": prices,
+        "latest": latest,
+        "tickers": tickers_out,
+    }
+    _set_cache("prices", result)
+    return result
 
 
 def _run_train_simulation():
