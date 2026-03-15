@@ -28,11 +28,11 @@ def compute_metrics(values):
     crr = float(vals[-1] / vals[0])
     return {
         "CRR": round(crr, 4),
-        "Annualized Return": round(ann_return, 4),
-        "Annualized Volatility": round(ann_vol, 4),
-        "Sharpe Ratio": round(sharpe, 4),
-        "Sortino Ratio": round(sortino, 4),
-        "MDD": round(mdd, 4),
+        "AR (%)": round(ann_return * 100, 4),
+        "AV (%)": round(ann_vol * 100, 4),
+        "Sharpe": round(sharpe, 4),
+        "Sortino": round(sortino, 4),
+        "MDD (%)": round(abs(mdd) * 100, 4),
     }
 
 
