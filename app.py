@@ -497,6 +497,10 @@ def serve_outputs(filename):
     return send_from_directory(OUTPUT_DIR, filename)
 
 
+@app.route("/favicon.ico")
+def favicon():
+    return "", 204
+
 if __name__ == "__main__":
     print("=" * 60)
     print("  RL Portfolio Dashboard (SDELP-DDPG + IQL-BL)")
