@@ -292,12 +292,23 @@ function showLoading(show) {
     });
 }
 
+function getMetric(metrics, possibleKeys, defaultVal = 0) {
+    if (!metrics) return defaultVal;
+    for (const key of possibleKeys) {
+        if (metrics[key] !== undefined) return metrics[key];
+    }
+    return defaultVal;
+}
+
 /* ── KPI Metric Cards ── */
 function renderMetricCards(portfolio) {
     // Portfolio CRR
     const portfolioEl = document.getElementById('metric-portfolio');
     if (portfolio && portfolio.sdelp_metrics) {
-        const crr = portfolio.sdelp_metrics['CRR'];
+        let crr = getMetric(portfolio.sdelp_metrics, ['CRR', 'Cumulative Return']);
+        if (crr === 0 && portfolio.sdelp_values && portfolio.sdelp_values.length > 0) {
+            crr = portfolio.sdelp_values[portfolio.sdelp_values.length - 1] / portfolio.sdelp_values[0];
+        }
         setMetricCard(portfolioEl, crr.toFixed(4),
             crr >= 1 ? `+${((crr - 1) * 100).toFixed(1)}%` : `${((crr - 1) * 100).toFixed(1)}%`,
             crr >= 1
@@ -307,7 +318,11 @@ function renderMetricCards(portfolio) {
     // Annualized Return
     const dailyEl = document.getElementById('metric-daily');
     if (portfolio && portfolio.sdelp_metrics) {
-        const ar = portfolio.sdelp_metrics['AR (%)'];
+        let ar = getMetric(portfolio.sdelp_metrics, ['AR (%)', 'Annualized Return (%)', 'Annualized Return']);
+        // If ar is raw (like 0.1716 instead of 17.16), multiply by 100 IF standard AR
+        if (portfolio.sdelp_metrics['Annualized Return'] !== undefined && portfolio.sdelp_metrics['AR (%)'] === undefined) {
+            ar = ar * 100;
+        }
         setMetricCard(dailyEl, ar.toFixed(2) + '%',
             ar >= 0 ? 'Positive' : 'Negative',
             ar >= 0
@@ -317,7 +332,7 @@ function renderMetricCards(portfolio) {
     // Sharpe
     const sharpeEl = document.getElementById('metric-sharpe');
     if (portfolio && portfolio.sdelp_metrics) {
-        const sharpe = portfolio.sdelp_metrics['Sharpe'];
+        const sharpe = getMetric(portfolio.sdelp_metrics, ['Sharpe', 'Sharpe Ratio']);
         setMetricCard(sharpeEl, sharpe.toFixed(3),
             sharpe >= 1 ? 'Good' : sharpe >= 0 ? 'Moderate' : 'Poor',
             sharpe >= 0
@@ -327,7 +342,10 @@ function renderMetricCards(portfolio) {
     // MDD
     const mddEl = document.getElementById('metric-mdd');
     if (portfolio && portfolio.sdelp_metrics) {
-        const mdd = portfolio.sdelp_metrics['MDD (%)'];
+        let mdd = getMetric(portfolio.sdelp_metrics, ['MDD (%)', 'Max Drawdown (%)', 'MDD']);
+        if (portfolio.sdelp_metrics['MDD'] !== undefined && portfolio.sdelp_metrics['MDD (%)'] === undefined) {
+            mdd = Math.abs(mdd) * 100;
+        }
         setMetricCard(mddEl, '-' + mdd.toFixed(2) + '%',
             mdd <= 20 ? 'Low Risk' : mdd <= 40 ? 'Medium' : 'High Risk',
             mdd <= 30
@@ -922,21 +940,34 @@ function renderTrainMetrics(data) {
     const m1 = data.sdelp_metrics;
     const m2 = data.bah_metrics;
 
-    const metrics = [
-        { key: 'CRR', label: 'CRR (Cumulative Return)', fmt: 4, higherBetter: true },
-        { key: 'AR (%)', label: 'Annualized Return (%)', fmt: 2, higherBetter: true },
-        { key: 'Sharpe', label: 'Sharpe Ratio', fmt: 3, higherBetter: true },
-        { key: 'Sortino', label: 'Sortino Ratio', fmt: 3, higherBetter: true },
-        { key: 'AV (%)', label: 'Annualized Volatility (%)', fmt: 2, higherBetter: false },
-        { key: 'MDD (%)', label: 'Max Drawdown (%)', fmt: 2, higherBetter: false },
+    const metricsDef = [
+        { keys: ['CRR', 'Cumulative Return'], label: 'CRR (Cumulative Return)', fmt: 4, higherBetter: true, mult: 1 },
+        { keys: ['AR (%)', 'Annualized Return (%)', 'Annualized Return'], label: 'Annualized Return (%)', fmt: 2, higherBetter: true, scaleLegacy: true },
+        { keys: ['Sharpe', 'Sharpe Ratio'], label: 'Sharpe Ratio', fmt: 3, higherBetter: true, mult: 1 },
+        { keys: ['Sortino', 'Sortino Ratio'], label: 'Sortino Ratio', fmt: 3, higherBetter: true, mult: 1 },
+        { keys: ['AV (%)', 'Annualized Volatility (%)', 'Annualized Volatility'], label: 'Annualized Volatility (%)', fmt: 2, higherBetter: false, scaleLegacy: true },
+        { keys: ['MDD (%)', 'Max Drawdown (%)', 'MDD'], label: 'Max Drawdown (%)', fmt: 2, higherBetter: false, scaleLegacyAbs: true },
     ];
 
-    tbody.innerHTML = metrics.map(m => {
-        const v1 = m1[m.key];
-        const v2 = m2[m.key];
+    tbody.innerHTML = metricsDef.map(m => {
+        let v1 = getMetric(m1, m.keys);
+        let v2 = getMetric(m2, m.keys);
+
+        if (m.scaleLegacy && m1 && m1[m.keys[2]] !== undefined && m1[m.keys[0]] === undefined) v1 *= 100;
+        if (m.scaleLegacy && m2 && m2[m.keys[2]] !== undefined && m2[m.keys[0]] === undefined) v2 *= 100;
+
+        if (m.scaleLegacyAbs && m1 && m1[m.keys[2]] !== undefined && m1[m.keys[0]] === undefined) v1 = Math.abs(v1) * 100;
+        if (m.scaleLegacyAbs && m2 && m2[m.keys[2]] !== undefined && m2[m.keys[0]] === undefined) v2 = Math.abs(v2) * 100;
+        
+        // If CRR is 0, attempt to calculate it for train data
+        if (m.keys[0] === 'CRR' && v1 === 0 && data.sdelp_values && data.sdelp_values.length > 0) {
+            v1 = data.sdelp_values[data.sdelp_values.length - 1] / data.sdelp_values[0];
+            v2 = data.bah_values[data.bah_values.length - 1] / data.bah_values[0];
+        }
+
         const sdelp_wins = m.higherBetter ? v1 > v2 : v1 < v2;
-        const cls1 = sdelp_wins ? 'value-winner' : colorClass(v1, m.key);
-        const cls2 = !sdelp_wins ? 'value-winner' : colorClass(v2, m.key);
+        const cls1 = sdelp_wins ? 'value-winner' : colorClass(v1, m.keys[0]);
+        const cls2 = !sdelp_wins ? 'value-winner' : colorClass(v2, m.keys[0]);
         return `<tr>
             <td class="model-name">${m.label}</td>
             <td class="${cls1}">${v1.toFixed(m.fmt)}</td>
